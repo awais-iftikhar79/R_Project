@@ -1,67 +1,158 @@
-# Step 1: Load the dataset
-data <- read.csv("heart_disease_uci.csv")
-head(data)
+# =========================
+# STEP 1: Load libraries
+# =========================
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(corrplot)
 
-# Step 2.1: View structure of dataset
-str(data)
+# =========================
+# STEP 2: Read dataset
+# =========================
+df <- read.csv("heart_disease_uci.csv", na.strings = c("", "NA", "?", "null"))
 
-# Step 2.2: Check dimensions (rows, columns)
-dim(data)
+# Look at the data
+head(df)
+str(df)
+dim(df)
 
-# Step 2.3: View column names
-colnames(data)
+# =========================
+# STEP 3: Remove duplicate rows
+# =========================
+df <- df[!duplicated(df), ]
 
-# Step 3: Check missing values in each column
-colSums(is.na(data))
+# Remove ID column (not a useful feature)
+if ("id" %in% names(df)) {
+    df$id <- NULL
+}
 
-# Check duplicate rows
-sum(duplicated(data))
+# OPTIONAL: remove ca (too many missing in this dataset)
+if ("ca" %in% names(df)) {
+    df$ca <- NULL
+}
 
-# Remove duplicates
-data <- data[!duplicated(data), ]
+# =========================
+# STEP 4: Fix "wrong missing" values
+# =========================
+# In many UCI heart files, chol = 0 means missing
+if ("chol" %in% names(df)) {
+    df$chol[df$chol == 0] <- NA
+}
 
+# =========================
+# STEP 5: Convert categorical columns to factor
+# =========================
+df$sex <- as.factor(df$sex)
+df$dataset <- as.factor(df$dataset)
+df$cp <- as.factor(df$cp)
+df$fbs <- as.factor(df$fbs)
+df$restecg <- as.factor(df$restecg)
+df$exang <- as.factor(df$exang)
+df$slope <- as.factor(df$slope)
+df$thal <- as.factor(df$thal)
+df$num <- as.factor(df$num)
 
-# Remove unnecessary columns
-data$ca <- NULL
-data$id <- NULL
+# =========================
+# STEP 6: Handle missing values
+# =========================
 
-# List of numerical columns
-num_cols <- c("trestbps", "chol", "thalch", "oldpeak")
+# 6.1 Numeric columns: fill NA with median
+num_cols <- c("age", "trestbps", "chol", "thalch", "oldpeak")
 
-# Replace NA with median
 for (col in num_cols) {
-    data[[col]][is.na(data[[col]])] <- median(data[[col]], na.rm = TRUE)
+    df[[col]][is.na(df[[col]])] <- median(df[[col]], na.rm = TRUE)
 }
 
-head(data)
-colSums(is.na(data))
-
-# Function to calculate mode
+# 6.2 Categorical columns: fill NA with mode (most common value)
 get_mode <- function(x) {
-    ux <- unique(x[!is.na(x)])
-    ux[which.max(tabulate(match(x, ux)))]
+    t <- table(x)
+    names(t)[which.max(t)]
 }
 
-# Categorical columns
-cat_cols <- c("fbs", "exang")
+cat_cols <- c("sex", "dataset", "cp", "fbs", "restecg", "exang", "slope", "thal", "num")
 
-# Replace NA with mode
 for (col in cat_cols) {
-    data[[col]][is.na(data[[col]])] <- get_mode(data[[col]])
+    df[[col]][is.na(df[[col]])] <- get_mode(df[[col]])
 }
 
-# Convert categorical variables to factors
-data$sex <- as.factor(data$sex)
-data$dataset <- as.factor(data$dataset)
-data$cp <- as.factor(data$cp)
-data$fbs <- as.factor(data$fbs)
-data$restecg <- as.factor(data$restecg)
-data$exang <- as.factor(data$exang)
-data$slope <- as.factor(data$slope)
-data$thal <- as.factor(data$thal)
+# Check missing after cleaning
+colSums(is.na(df))
 
-# Convert target variable to factor (binary later)
-data$num <- as.factor(data$num)
+# =========================
+# STEP 7: Create binary target (No/Yes)
+# =========================
+df$heart_disease <- ifelse(df$num == "0", "No", "Yes")
+df$heart_disease <- as.factor(df$heart_disease)
 
+# =========================
+# STEP 8: Simple statistics
+# =========================
+summary(df)
 
-summary(data)
+# =========================
+# STEP 9: Required Plots (EDA)
+# =========================
+
+# 9.1 Target distribution
+ggplot(df, aes(x = heart_disease)) +
+    geom_bar() +
+    labs(title = "Heart Disease Target Distribution")
+
+# 9.2 Histogram (example numeric)
+ggplot(df, aes(x = age)) +
+    geom_histogram(bins = 25) +
+    labs(title = "Age Distribution")
+
+# 9.3 Bar plot (categorical example)
+ggplot(df, aes(x = sex, fill = heart_disease)) +
+    geom_bar(position = "dodge") +
+    labs(title = "Heart Disease by Sex")
+
+# 9.4 Boxplot (target vs numeric example)
+ggplot(df, aes(x = heart_disease, y = chol)) +
+    geom_boxplot() +
+    labs(title = "Cholesterol vs Heart Disease")
+
+# 9.5 Correlation matrix (numeric only)
+num_data <- df[, num_cols]
+cor_mat <- cor(num_data)
+corrplot(cor_mat, method = "color")
+
+# 9.6 Scatter plots (numeric vs numeric)
+plot(df$age, df$chol,
+    xlab = "Age", ylab = "Cholesterol",
+    main = "Scatter Plot: Age vs Cholesterol"
+)
+
+# =========================
+# STEP 10: Train/Test split (70/30)
+# =========================
+set.seed(123)
+n <- nrow(df)
+train_index <- sample(1:n, size = 0.7 * n)
+
+train <- df[train_index, ]
+test <- df[-train_index, ]
+
+# =========================
+# STEP 11: Logistic Regression model
+# =========================
+model <- glm(heart_disease ~ age + sex + trestbps + chol + thalch + exang,
+    data = train, family = "binomial"
+)
+
+summary(model)
+
+# =========================
+# STEP 12: Prediction + Accuracy
+# =========================
+prob <- predict(model, newdata = test, type = "response")
+
+pred <- ifelse(prob > 0.5, "Yes", "No")
+pred <- factor(pred, levels = levels(test$heart_disease))
+
+cm <- table(Predicted = pred, Actual = test$heart_disease)
+cm
+
+accuracy <- sum(diag(cm)) / sum(cm)
+accuracy
